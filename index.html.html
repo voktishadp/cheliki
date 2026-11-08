@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0f1424">
+<title>Толпа — бегущие человечки</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#0f1424;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#fff}
+  #app{position:relative;margin:0 auto;height:100%;overflow:hidden}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #hud{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;
+    padding:calc(env(safe-area-inset-top) + 10px) 12px 0;pointer-events:none}
+  .pill{background:rgba(15,20,36,.62);border-radius:999px;padding:6px 12px;font-weight:700;font-size:14px;
+    backdrop-filter:blur(4px)}
+  #bar{flex:1;height:10px;border-radius:6px;background:rgba(255,255,255,.22);overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4fc3ff,#2f7bff)}
+  #snd{pointer-events:auto;border:0;color:#fff;cursor:pointer}
+  .overlay{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+    gap:14px;text-align:center;padding:24px;background:rgba(10,14,30,.74);backdrop-filter:blur(3px)}
+  .overlay.show{display:flex}
+  .overlay h1{margin:0;font-size:38px;line-height:1.05;letter-spacing:.5px}
+  .overlay h1 b{color:#4fc3ff}
+  .overlay h1 em{color:#ff5a5a;font-style:normal}
+  .overlay p{margin:0;opacity:.85;font-size:16px;max-width:280px;line-height:1.35}
+  .btn{margin-top:6px;border:0;border-radius:16px;padding:15px 38px;font-size:20px;font-weight:800;color:#fff;
+    background:linear-gradient(180deg,#3da5ff,#1f63ff);box-shadow:0 6px 0 #1245b8,0 12px 24px rgba(0,0,0,.35);
+    cursor:pointer}
+  .btn:active{transform:translateY(3px);box-shadow:0 3px 0 #1245b8}
+  .btn.red{background:linear-gradient(180deg,#ff6b6b,#e22d2d);box-shadow:0 6px 0 #a11818,0 12px 24px rgba(0,0,0,.35)}
+  .btn.red:active{box-shadow:0 3px 0 #a11818}
+  .big{font-size:56px;font-weight:900}
+  .tiny{font-size:13px;opacity:.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+  <div id="hud">
+    <div class="pill" id="lvl">Ур. 1</div>
+    <div id="bar"><i id="barfill"></i></div>
+    <button class="pill" id="snd" aria-label="Звук">🔊</button>
+  </div>
+
+  <div class="overlay show" id="menu">
+    <h1><b>ТОЛПА</b><br>против <em>ТОЛПЫ</em></h1>
+    <p>Веди синих человечков через ворота и побеждай красных. Двигай пальцем влево‑вправо.</p>
+    <div class="tiny" id="menuLvl"></div>
+    <button class="btn" id="playBtn">Играть</button>
+  </div>
+
+  <div class="overlay" id="win">
+    <div class="big">🏆</div>
+    <h1 id="winTitle">Уровень пройден!</h1>
+    <p id="winText"></p>
+    <button class="btn" id="nextBtn">Дальше</button>
+  </div>
+
+  <div class="overlay" id="lose">
+    <div class="big">💀</div>
+    <h1>Поражение</h1>
+    <p id="loseText"></p>
+    <button class="btn red" id="retryBtn">Ещё раз</button>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------- Telegram (необязательно: игра работает и вне Telegram, и без интернета) ---------- */
+let TG = null;
+function initTG() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (!tg || TG) return;
+  try {
+    tg.ready(); tg.expand();
+    tg.setHeaderColor && tg.setHeaderColor('#0f1424');
+    tg.setBackgroundColor && tg.setBackgroundColor('#0f1424');
+    tg.disableVerticalSwipes && tg.disableVerticalSwipes();
+    TG = tg;
+  } catch (e) {}
+}
+try {
+  initTG();
+  if (!TG) {
+    const s = document.createElement('script');
+    s.src = 'https://telegram.org/js/telegram-web-app.js';
+    s.onload = initTG;
+    s.onerror = () => {};
+    document.head.appendChild(s);
+  }
+} catch (e) {}
+function haptic(kind) {
+  try {
+    if (TG && TG.HapticFeedback) {
+      if (kind === 'win') TG.HapticFeedback.notificationOccurred('success');
+      else if (kind === 'lose') TG.HapticFeedback.notificationOccurred('error');
+      else TG.HapticFeedback.impactOccurred(kind || 'light');
+    } else if (navigator.vibrate) {
+      navigator.vibrate(kind === 'win' ? [30, 40, 60] : kind === 'lose' ? 120 : 12);
+    }
+  } catch (e) {}
+}
+
+/* ---------- Хранилище ---------- */
+function load(k, d) { try { const v = localStorage.getItem('cr_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+function save(k, v) { try { localStorage.setItem('cr_' + k, JSON.stringify(v)); } catch (e) {} }
+
+/* ---------- Звук ---------- */
+let actx = null, muted = load('muted', false);
+function beep(freq, dur, type, vol, slide) {
+  if (muted) return;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(freq, actx.currentTime);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, slide), actx.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.08, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + dur);
+  } catch (e) {}
+}
+const sGood = () => { beep(520, .12, 'triangle', .09, 880); };
+const sBad = () => { beep(300, .16, 'sawtooth', .06, 140); };
+const sHit = () => { beep(180 + Math.random() * 80, .05, 'square', .035); };
+const sWin = () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, .2, 'triangle', .1), i * 110)); };
+const sLose = () => { beep(260, .5, 'sawtooth', .09, 70); };
+
+/* ---------- Canvas ---------- */
+const W = 400, ROAD_L = 30, ROAD_R = 370, MID = 200;
+const app = document.getElementById('app');
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let H = 700, scale = 1, DPR = 1, PY = 520;
+
+function resize() {
+  const iw = window.innerWidth, ih = window.innerHeight;
+  const cw = Math.min(iw, ih * 0.62);
+  app.style.width = cw + 'px';
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(cw * DPR);
+  cv.height = Math.round(ih * DPR);
+  scale = cw / W;
+  H = ih / scale;
+  PY = H * 0.76;
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------- Генерация уровня ---------- */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function apply(op, v, n) {
+  switch (op) {
+    case '+': return n + v;
+    case '-': return n - v;
+    case '×': return n * v;
+    case '÷': return Math.ceil(n / v);
+  }
+  return n;
+}
+const isGood = o => o.op === '+' || o.op === '×';
+function nice(v) { return v >= 60 ? Math.round(v / 10) * 10 : v >= 20 ? Math.round(v / 5) * 5 : v; }
+
+const START_COUNT = 5;
+function genLevel(lv) {
+  const rng = mulberry32(lv * 7919 + 13);
+  let ideal = START_COUNT;                       // сколько будет у идеального игрока
+  const f = Math.min(0.40 + lv * 0.03, 0.85);    // «сила» врагов относительно идеала
+  const items = [];
+  let d = 460;
+  const blocks = Math.min(3 + Math.floor(lv * 0.7), 10);
+
+  function opt(kind) {
+    if (kind === 'mul') return { op: '×', v: rng() < 0.7 ? 2 : 3 };
+    if (kind === 'add') return { op: '+', v: nice(Math.max(3, Math.round(ideal * (0.25 + rng() * 0.5)))) };
+    if (kind === 'sub') return { op: '-', v: nice(Math.max(2, Math.round(ideal * (0.15 + rng() * 0.4)))) };
+    return { op: '÷', v: 2 };
+  }
+  const goodKinds = lv < 2 ? ['add'] : ['add', 'add', 'mul'];
+  const badKinds = lv < 3 ? ['sub'] : ['sub', 'sub', 'div'];
+  const pick = a => a[Math.floor(rng() * a.length)];
+
+  function gateRow() {
+    const r = rng();
+    let a, b;
+    if (r < 0.5) { a = opt(pick(goodKinds)); b = opt(pick(badKinds)); }
+    else if (r < 0.8) { a = opt(pick(goodKinds)); b = opt(pick(goodKinds)); if (a.op === b.op && a.v === b.v) b = opt('add'); }
+    else { a = opt(pick(badKinds)); b = opt(pick(badKinds)); }
+    if (rng() < 0.5) [a, b] = [b, a];
+    items.push({ type: 'gate', d, l: a, r: b, done: false });
+    ideal = Math.max(1, Math.max(apply(a.op, a.v, ideal), apply(b.op, b.v, ideal)));
+    d += 330;
+  }
+  function enemyRow(boss) {
+    const k = boss ? Math.min(f + 0.08, 0.92) : f;
+    const n = Math.max(2, Math.round(ideal * k * (0.92 + rng() * 0.16)));
+    items.push({ type: 'enemy', d, n, boss: !!boss, done: false });
+    ideal = Math.max(1, ideal - n);
+    d += boss ? 380 : 330;
+  }
+  for (let i = 0; i < blocks; i++) { gateRow(); gateRow(); enemyRow(false); }
+  gateRow();
+  if (lv % 5 === 0) enemyRow(true);
+  items.push({ type: 'finish', d: d + 60 });
+  return { items, length: d + 60 };
+}
+
+/* ---------- Состояние игры ---------- */
+let level = load('level', 1);
+let best = load('best', level);
+let G = null;
+let st = 'menu';      // menu | play | battle | win | lose
+let parts = [], floats = [];
+let time = 0;
+
+function newGame(lv) {
+  const L = genLevel(lv);
+  G = {
+    lv, items: L.items, length: L.length,
+    n: START_COUNT, px: MID, tx: MID, trav: 0, bat: null,
+  };
+  parts = []; floats = [];
+  updateHud(true);
+}
+const speed = () => 175 + Math.min(level, 15) * 5;
+
+/* ---------- Ввод ---------- */
+let dragging = false, lastX = 0;
+const keys = {};
+cv.addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; try { cv.setPointerCapture(e.pointerId); } catch (_) {} });
+cv.addEventListener('pointermove', e => {
+  if (!dragging || !G) return;
+  const dx = (e.clientX - lastX) / scale;
+  lastX = e.clientX;
+  G.tx = Math.max(ROAD_L, Math.min(ROAD_R, G.tx + dx * 1.2));
+});
+const endDrag = () => { dragging = false; };
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', endDrag);
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+/* ---------- HUD / Оверлеи ---------- */
+const $ = id => document.getElementById(id);
+const el = { lvl: $('lvl'), bar: $('barfill'), menu: $('menu'), win: $('win'), lose: $('lose'), snd: $('snd') };
+function show(o) { ['menu', 'win', 'lose'].forEach(k => el[k].classList.toggle('show', k === o)); }
+function updateHud(force) {
+  el.lvl.textContent = 'Ур. ' + (G ? G.lv : level);
+  if (G) el.bar.style.width = Math.min(100, G.trav / (G.length - 60) * 100) + '%';
+}
+function updateSnd() { el.snd.textContent = muted ? '🔇' : '🔊'; }
+updateSnd();
+el.snd.addEventListener('click', e => { e.stopPropagation(); muted = !muted; save('muted', muted); updateSnd(); });
+$('menuLvl').textContent = level > 1 ? 'Текущий уровень: ' + level + ' · рекорд: ' + best : '';
+
+function startLevel() {
+  newGame(level);
+  st = 'play';
+  show(null);
+  beep(440, .1, 'triangle', .06, 660);
+}
+$('playBtn').addEventListener('click', startLevel);
+$('retryBtn').addEventListener('click', startLevel);
+$('nextBtn').addEventListener('click', startLevel);
+
+function doWin() {
+  st = 'win';
+  level = G.lv + 1;
+  best = Math.max(best, level);
+  save('level', level); save('best', best);
+  sWin(); haptic('win');
+  for (let i = 0; i < 80; i++) {
+    parts.push({ x: MID + (Math.random() - .5) * 240, y: PY - 200 - Math.random() * 80,
+      vx: (Math.random() - .5) * 160, vy: Math.random() * 120 - 40, life: 1.6 + Math.random(),
+      c: ['#4fc3ff', '#ffd23f', '#ff5a5a', '#7dff7d', '#fff'][i % 5], s: 3 + Math.random() * 3, g: 160 });
+  }
+  setTimeout(() => {
+    if (st !== 'win') return;
+    $('winTitle').textContent = 'Уровень ' + G.lv + ' пройден!';
+    $('winText').textContent = 'До финиша добежало человечков: ' + G.n;
+    $('nextBtn').textContent = 'Уровень ' + level;
+    show('win');
+  }, 900);
+}
+function doLose(reason) {
+  st = 'lose';
+  sLose(); haptic('lose');
+  setTimeout(() => {
+    if (st !== 'lose') return;
+    $('loseText').textContent = reason;
+    show('lose');
+  }, 700);
+}
+
+/* ---------- Эффекты ---------- */
+function burst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, s = 40 + Math.random() * 110;
+    parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: .35 + Math.random() * .35, c: color, s: 2 + Math.random() * 2.5, g: 0 });
+  }
+}
+function floatText(x, y, txt, color) { floats.push({ x, y, txt, color, life: 1 }); }
+
+/* ---------- Логика ---------- */
+function crowdR(n, sc) { return 6.2 * Math.sqrt(Math.min(n, 90) + 0.3) * (sc || 1); }
+
+function update(dt) {
+  time += dt;
+
+  // частицы / текст
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+  for (let i = floats.length - 1; i >= 0; i--) {
+    const f = floats[i]; f.life -= dt * 1.1; f.y -= 55 * dt;
+    if (f.life <= 0) floats.splice(i, 1);
+  }
+
+  if (!G) return;
+
+  if (st === 'menu') { G.trav += 70 * dt; return; }
+  if (st !== 'play' && st !== 'battle') return;
+
+  // управление клавишами
+  const dir = (keys['arrowright'] || keys['d'] ? 1 : 0) - (keys['arrowleft'] || keys['a'] ? 1 : 0);
+  if (dir) G.tx = Math.max(ROAD_L, Math.min(ROAD_R, G.tx + dir * 330 * dt));
+  const rad = Math.min(crowdR(G.n), 58);
+  const minX = ROAD_L + rad * 0.55, maxX = ROAD_R - rad * 0.55;
+  G.px += (Math.max(minX, Math.min(maxX, G.tx)) - G.px) * Math.min(1, dt * 12);
+
+  if (st === 'play') {
+    G.trav += speed() * dt;
+    for (const it of G.items) {
+      if (it.done) continue;
+      if (it.type === 'gate' && G.trav >= it.d) {
+        it.done = true;
+        const o = G.px < MID ? it.l : it.r;
+        const before = G.n;
+        G.n = Math.max(0, apply(o.op, o.v, G.n));
+        const good = G.n >= before;
+        floatText(G.px, PY - 40, o.op + o.v, good ? '#7dd3ff' : '#ff7b7b');
+        burst(G.px, PY, good ? '#4fc3ff' : '#ff5a5a', 14);
+        good ? sGood() : sBad();
+        haptic(good ? 'light' : 'medium');
+        if (G.n <= 0) { doLose('Все человечки пропали в воротах.'); return; }
+      } else if (it.type === 'enemy' && it.d - G.trav <= 120) {
+        it.done = true;
+        G.bat = { it, pn: G.n, en: it.n, t: 0, k: 0, phase: 0, acc: 0, dist: it.d - G.trav, ex: MID };
+        st = 'battle';
+        break;
+      } else if (it.type === 'finish' && G.trav >= it.d) {
+        it.done = true;
+        doWin();
+        return;
+      }
+    }
+  } else if (st === 'battle') {
+    const b = G.bat;
+    b.t += dt;
+    if (b.phase === 0) {
+      b.k = Math.min(1, b.t / 0.4);
+      if (b.t >= 0.4) { b.phase = 1; b.acc = 0; }
+    } else if (b.phase === 1) {
+      b.acc += dt;
+      const step = Math.max(1, Math.ceil(Math.min(b.pn, b.en) / 22));
+      while (b.acc >= 0.03 && b.pn > 0 && b.en > 0) {
+        b.acc -= 0.03;
+        const s = Math.min(step, b.pn, b.en);
+        b.pn -= s; b.en -= s;
+        const mx = (G.px + b.ex) / 2, my = PY - 38;
+        burst(mx + (Math.random() - .5) * 30, my + (Math.random() - .5) * 20, Math.random() < .5 ? '#4fc3ff' : '#ff5a5a', 2);
+        sHit();
+      }
+      G.n = b.pn;
+      if (b.pn <= 0 || b.en <= 0) { b.phase = 2; b.t = 0; haptic('heavy'); }
+    } else {
+      if (b.t >= 0.35) {
+        G.bat = null;
+        if (b.pn > 0 && b.en <= 0) {
+          G.n = b.pn;
+          floatText(G.px, PY - 60, 'Победа!', '#ffe27a');
+          st = 'play';
+        } else {
+          G.n = 0;
+          doLose(b.pn === 0 && b.en === 0 ? 'Силы равны — этого мало, нужен перевес.' : 'Врагов оказалось больше.');
+        }
+      }
+    }
+  }
+  updateHud();
+}
+
+/* ---------- Рендер ---------- */
+function drawCrowd(cx, cy, n, body, head, sc) {
+  sc = sc || 1;
+  const k = Math.min(n, 90);
+  const bob = time * 11;
+  const pts = [];
+  for (let i = 0; i < k; i++) {
+    const r = 6.2 * Math.sqrt(i + 0.3) * sc, a = i * 2.39996323;
+    pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.9 + Math.sin(bob + i * 1.7) * 1.6 * sc]);
+  }
+  // тела
+  ctx.fillStyle = body; ctx.beginPath();
+  for (const p of pts) { ctx.moveTo(p[0] + 4.6 * sc, p[1]); ctx.arc(p[0], p[1], 4.6 * sc, 0, 6.2832); }
+  ctx.fill();
+  // головы
+  ctx.fillStyle = head; ctx.beginPath();
+  for (const p of pts) { ctx.moveTo(p[0] + 3.1 * sc, p[1] - 5.2 * sc); ctx.arc(p[0], p[1] - 5.2 * sc, 3.1 * sc, 0, 6.2832); }
+  ctx.fill();
+}
+function label(cx, cy, n, color) {
+  const txt = String(Math.max(0, n));
+  ctx.font = '800 20px -apple-system,Segoe UI,Roboto,Arial,sans-serif';
+  const w = ctx.measureText(txt).width + 18;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(cx - w / 2, cy - 15, w, 30, 15); else ctx.rect(cx - w / 2, cy - 15, w, 30);
+  ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(txt, cx, cy + 1);
+}
+function drawGate(y, o, x0, x1) {
+  const good = isGood(o);
+  const h = 62;
+  const grad = ctx.createLinearGradient(0, y - h / 2, 0, y + h / 2);
+  if (good) { grad.addColorStop(0, 'rgba(79,195,255,.88)'); grad.addColorStop(1, 'rgba(36,110,255,.88)'); }
+  else { grad.addColorStop(0, 'rgba(255,110,110,.88)'); grad.addColorStop(1, 'rgba(220,40,40,.88)'); }
+  ctx.fillStyle = grad;
+  ctx.fillRect(x0, y - h / 2, x1 - x0, h);
+  ctx.fillStyle = 'rgba(255,255,255,.9)';
+  ctx.fillRect(x0, y - h / 2, x1 - x0, 3);
+  ctx.fillRect(x0, y + h / 2 - 3, x1 - x0, 3);
+  ctx.fillStyle = '#fff';
+  ctx.font = '900 34px -apple-system,Segoe UI,Roboto,Arial,sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 4;
+  ctx.fillText(o.op + o.v, (x0 + x1) / 2, y + 2);
+  ctx.shadowBlur = 0;
+}
+
+function draw() {
+  ctx.setTransform(DPR * scale, 0, 0, DPR * scale, 0, 0);
+  // трава
+  ctx.fillStyle = '#2c7a4b'; ctx.fillRect(0, 0, W, H);
+  // дорога
+  ctx.fillStyle = '#48515f'; ctx.fillRect(ROAD_L, 0, ROAD_R - ROAD_L, H);
+  const trav = G ? G.trav : 0;
+  // полосатые бордюры
+  const off = trav % 40, fl = Math.floor(trav / 40);
+  for (let i = -1; i * 40 < H + 40; i++) {
+    const y = i * 40 + off, idx = i - fl;
+    ctx.fillStyle = (idx & 1) ? '#f2f2f2' : '#e5484d';
+    ctx.fillRect(ROAD_L - 9, y, 9, 40);
+    ctx.fillRect(ROAD_R, y, 9, 40);
+  }
+  // центральная пунктирная линия
+  ctx.fillStyle = 'rgba(255,255,255,.18)';
+  const off2 = trav % 70;
+  for (let y = -70 + off2; y < H; y += 70) ctx.fillRect(MID - 2, y, 4, 34);
+
+  if (!G) return;
+
+  // объекты
+  for (const it of G.items) {
+    if (it.done && it.type !== 'finish') continue;
+    const y = PY - (it.d - G.trav);
+    if (y < -120 || y > H + 120) continue;
+    if (it.type === 'gate') {
+      drawGate(y, it.l, ROAD_L, MID - 2);
+      drawGate(y, it.r, MID + 2, ROAD_R);
+    } else if (it.type === 'finish') {
+      const sz = 20;
+      for (let x = ROAD_L, c = 0; x < ROAD_R; x += sz, c++)
+        for (let r = 0; r < 2; r++) { ctx.fillStyle = ((c + r) & 1) ? '#111' : '#fff'; ctx.fillRect(x, y - sz + r * sz, sz, sz); }
+      ctx.fillStyle = '#fff'; ctx.font = '900 26px -apple-system,Segoe UI,Roboto,Arial,sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 5;
+      ctx.fillText('ФИНИШ', MID, y - 44); ctx.shadowBlur = 0;
+    } else if (it.type === 'enemy' && st !== 'menu') {
+      const sc = it.boss ? 1.45 : 1;
+      drawCrowd(MID, y, it.n, it.boss ? '#b3121a' : '#e5484d', it.boss ? '#ff9a9a' : '#ff9a9a', sc);
+      label(MID, y - crowdR(it.n, sc) - 22, it.n, '#c92a2a');
+    }
+  }
+
+  // бой: враг движется навстречу
+  if (G.bat) {
+    const b = G.bat, sc = b.it.boss ? 1.45 : 1;
+    const dist = b.dist * (1 - b.k) + 52 * b.k;
+    const ex = MID + (G.px - MID) * b.k, ey = PY - dist;
+    b.ex = ex;
+    drawCrowd(ex, ey, b.en, b.it.boss ? '#b3121a' : '#e5484d', '#ff9a9a', sc);
+    label(ex, ey - crowdR(b.en, sc) - 22, b.en, '#c92a2a');
+  }
+
+  // игрок
+  if (st !== 'lose' || G.n > 0) {
+    drawCrowd(G.px, PY, G.n, '#2f8bff', '#bfe3ff', 1);
+    if (G.n > 0) label(G.px, PY + crowdR(G.n) + 26, G.n, '#1f63ff');
+  }
+
+  // частицы
+  for (const p of parts) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 2));
+    ctx.fillStyle = p.c; ctx.fillRect(p.x, p.y, p.s, p.s);
+  }
+  ctx.globalAlpha = 1;
+  // всплывающий текст
+  ctx.font = '900 28px -apple-system,Segoe UI,Roboto,Arial,sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const f of floats) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, f.life * 1.5));
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.strokeText(f.txt, f.x, f.y);
+    ctx.fillStyle = f.color; ctx.fillText(f.txt, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- Цикл ---------- */
+newGame(level);
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.033, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+document.addEventListener('visibilitychange', () => { last = performance.now(); });
+})();
+</script>
+</body>
+</html>

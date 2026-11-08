@@ -83,7 +83,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-acti
 .stat{background:rgba(255,255,255,.08);border-radius:14px;padding:10px 14px;min-width:76px}
 .stat .v{font-size:20px;font-weight:900}
 .stat .l{font-size:11px;opacity:.6;margin-top:2px}
-#countLabel{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px)+70px);
+#countLabel{position:absolute;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px)+52px);
   font-size:28px;font-weight:900;text-shadow:0 2px 8px rgba(0,0,0,.6);pointer-events:none;z-index:4;
   background:rgba(29,78,216,.85);padding:4px 16px;border-radius:20px;border:2px solid rgba(255,255,255,.3);display:none}
 #countLabel.show{display:block}
@@ -122,7 +122,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-acti
     <div class="big">🏆</div>
     <h1 id="winTitle">Уровень пройден!</h1>
     <div class="stats">
-      <div class="stat"><div class="v" id="winCrowd">0</div><div class="l">человечков</div></div>
+      <div class="stat"><div class="v" id="winCrowd">0</div><div class="l">челиков</div></div>
       <div class="stat"><div class="v" id="winSteps">0</div><div class="l">ступенек</div></div>
       <div class="stat"><div class="v coin" id="winCoins">+0</div><div class="l">монет</div></div>
     </div>
@@ -134,6 +134,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-acti
     <h1>Поражение</h1>
     <p id="loseText"></p>
     <button class="btn red" id="retryBtn">Ещё раз</button>
+    <button class="btn sm" id="loseMenuBtn" style="background:linear-gradient(180deg,#64748b,#475569);box-shadow:0 5px 0 #334155">В меню</button>
   </div>
 
   <div class="overlay" id="pause">
@@ -314,29 +315,8 @@ fill.position.set(0,8,15);scene.add(fill);
 const world=new THREE.Group();scene.add(world);
 const ROAD_W=7;
 
-/* Ambient floating sparkles */
-const ambientParts=[];
-function spawnAmbient(biome){
-  for(const p of ambientParts)scene.remove(p);
-  ambientParts.length=0;
-  const col=biome.accent||0xffffff;
-  for(let i=0;i<30;i++){
-    const m=new THREE.Mesh(
-      new THREE.SphereGeometry(0.04+Math.random()*0.05,6,4),
-      new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.35+Math.random()*0.3})
-    );
-    m.position.set((Math.random()-0.5)*20,1+Math.random()*6,-Math.random()*80);
-    m.userData={sp:0.3+Math.random()*0.8,ph:Math.random()*6,baseY:m.position.y};
-    scene.add(m);ambientParts.push(m);
-  }
-}
-function updateAmbient(dt){
-  for(const m of ambientParts){
-    m.userData.ph+=dt*m.userData.sp;
-    m.position.y=m.userData.baseY+Math.sin(m.userData.ph)*0.4;
-    m.position.x+=Math.sin(m.userData.ph*0.7)*dt*0.15;
-  }
-}
+function spawnAmbient(){}
+function updateAmbient(){}
 
 /* Character geos — small blob people matching reference scale */
 const bodyGeo=new THREE.SphereGeometry(0.14,10,8);
@@ -351,14 +331,15 @@ function buildEnvironment(biome){
   scene.fog=new THREE.Fog(biome.fog,biome.fogNear,biome.fogFar);
   spawnAmbient(biome);
 
-  // Road — light surface like reference
+  // Long continuous road (covers full level + 100-step stairs)
+  const ROAD_LEN=500;
   const roadMat=new THREE.MeshStandardMaterial({color:biome.road,roughness:0.7,metalness:0.05});
-  const road=new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W,300),roadMat);
-  road.rotation.x=-Math.PI/2;road.position.z=-130;road.receiveShadow=true;world.add(road);
+  const road=new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W,ROAD_LEN),roadMat);
+  road.rotation.x=-Math.PI/2;road.position.z=-ROAD_LEN/2+10;road.receiveShadow=true;world.add(road);
 
-  // Chevron arrows on road (like reference)
+  // Chevron arrows on road
   const chevMat=new THREE.MeshBasicMaterial({color:biome.roadLine,transparent:true,opacity:0.35});
-  for(let i=0;i<50;i++){
+  for(let i=0;i<90;i++){
     const chev=new THREE.Mesh(new THREE.PlaneGeometry(1.8,0.9),chevMat);
     chev.rotation.x=-Math.PI/2;chev.position.set(0,0.015,-i*5.5);
     world.add(chev);
@@ -367,16 +348,16 @@ function buildEnvironment(biome){
   // Soft side edges
   const edgeMat=new THREE.MeshStandardMaterial({color:biome.curbA,roughness:0.6});
   for(const side of[-1,1]){
-    const edge=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.12,300),edgeMat);
-    edge.position.set(side*(ROAD_W/2+0.1),0.06,-130);world.add(edge);
+    const edge=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.12,ROAD_LEN),edgeMat);
+    edge.position.set(side*(ROAD_W/2+0.1),0.06,-ROAD_LEN/2+10);world.add(edge);
   }
 
   // Side ground
   const sideMat=new THREE.MeshStandardMaterial({color:biome.ground,roughness:0.9});
   for(const side of[-1,1]){
-    const gnd=new THREE.Mesh(new THREE.PlaneGeometry(40,300),sideMat);
+    const gnd=new THREE.Mesh(new THREE.PlaneGeometry(40,ROAD_LEN),sideMat);
     gnd.rotation.x=-Math.PI/2;
-    gnd.position.set(side*(ROAD_W/2+20),-0.02,-130);
+    gnd.position.set(side*(ROAD_W/2+20),-0.02,-ROAD_LEN/2+10);
     gnd.receiveShadow=true;world.add(gnd);
   }
 
@@ -505,58 +486,57 @@ function buildEnvironment(biome){
   }
 }
 
-/* ========== Character — solid blob like reference video ========== */
+/* ========== Челик — concept art style (big head, soft body, eyes forward) ========== */
 function makeCharacter(bodyColor, headColor, scale=1){
   const g=new THREE.Group();
-  // Single solid color (reference style)
-  const mat=new THREE.MeshStandardMaterial({color:bodyColor, roughness:0.45, metalness:0.02});
-  const eyeMat=new THREE.MeshStandardMaterial({color:0x1a2744, roughness:0.3});
+  // Soft clay material
+  const mat=new THREE.MeshStandardMaterial({color:bodyColor, roughness:0.35, metalness:0.05});
+  const eyeMat=new THREE.MeshStandardMaterial({color:0x0f172a, roughness:0.25});
 
-  // Body — round, slightly flattened
-  const body=new THREE.Mesh(bodyGeo, mat);
-  body.position.y=0.16*scale;
-  body.scale.set(1.05*scale, 0.9*scale, 1.0*scale);
+  // Chubby body
+  const body=new THREE.Mesh(new THREE.SphereGeometry(0.16,12,10), mat);
+  body.position.y=0.18*scale;
+  body.scale.set(1.15*scale, 1.0*scale, 0.95*scale);
   body.castShadow=true; g.add(body);
 
-  // Head — almost same color, sits on body
-  const headMat=new THREE.MeshStandardMaterial({color:bodyColor, roughness:0.4});
-  const head=new THREE.Mesh(headGeo, headMat);
-  head.position.y=0.34*scale;
-  head.scale.setScalar(scale);
+  // Large head (dominant like concept)
+  const headMat=new THREE.MeshStandardMaterial({color:bodyColor, roughness:0.32});
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.17,12,10), headMat);
+  head.position.y=0.40*scale;
+  head.scale.set(1.05*scale, 1.05*scale, 1.0*scale);
   head.castShadow=true; g.add(head);
 
-  // Eyes — simple dark dots
-  const eyeL=new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(-0.035*scale, 0.35*scale, 0.095*scale);
-  eyeL.scale.setScalar(scale); g.add(eyeL);
-  const eyeR=new THREE.Mesh(eyeGeo, eyeMat);
-  eyeR.position.set(0.035*scale, 0.35*scale, 0.095*scale);
-  eyeR.scale.setScalar(scale); g.add(eyeR);
+  // Eyes on FRONT of face: characters run toward -Z, so eyes at -Z
+  const eyeL=new THREE.Mesh(new THREE.SphereGeometry(0.035,8,6), eyeMat);
+  eyeL.position.set(-0.05*scale, 0.42*scale, -0.14*scale);
+  eyeL.scale.set(0.85*scale, 1.15*scale, 0.7*scale); g.add(eyeL);
+  const eyeR=new THREE.Mesh(new THREE.SphereGeometry(0.035,8,6), eyeMat);
+  eyeR.position.set(0.05*scale, 0.42*scale, -0.14*scale);
+  eyeR.scale.set(0.85*scale, 1.15*scale, 0.7*scale); g.add(eyeR);
 
-  // Stubby arms
-  const armL=new THREE.Mesh(armGeo, mat);
-  armL.position.set(-0.145*scale, 0.16*scale, 0);
-  armL.scale.setScalar(scale); g.add(armL);
-  const armR=new THREE.Mesh(armGeo, mat);
-  armR.position.set(0.145*scale, 0.16*scale, 0);
-  armR.scale.setScalar(scale); g.add(armR);
+  // Stubby arms (concept pose)
+  const armL=new THREE.Mesh(new THREE.SphereGeometry(0.055,8,6), mat);
+  armL.position.set(-0.18*scale, 0.20*scale, -0.02*scale);
+  armL.scale.set(scale, scale*1.1, scale); g.add(armL);
+  const armR=new THREE.Mesh(new THREE.SphereGeometry(0.055,8,6), mat);
+  armR.position.set(0.18*scale, 0.20*scale, -0.02*scale);
+  armR.scale.set(scale, scale*1.1, scale); g.add(armR);
 
-  // Legs
-  const legL=new THREE.Mesh(legGeo, mat);
-  legL.position.set(-0.05*scale, 0.04*scale, 0.015*scale);
-  legL.scale.setScalar(scale); g.add(legL);
-  const legR=new THREE.Mesh(legGeo, mat);
-  legR.position.set(0.05*scale, 0.04*scale, 0.015*scale);
-  legR.scale.setScalar(scale); g.add(legR);
+  // Legs / feet
+  const legL=new THREE.Mesh(new THREE.SphereGeometry(0.055,8,6), mat);
+  legL.position.set(-0.06*scale, 0.05*scale, -0.02*scale);
+  legL.scale.set(scale, scale*0.9, scale*1.15); g.add(legL);
+  const legR=new THREE.Mesh(new THREE.SphereGeometry(0.055,8,6), mat);
+  legR.position.set(0.06*scale, 0.05*scale, -0.02*scale);
+  legR.scale.set(scale, scale*0.9, scale*1.15); g.add(legR);
 
   g.userData={
     bodyMat:mat, headMat, limbMat:mat,
     armL, armR, legL, legR,
     phase: Math.random()*Math.PI*2,
     scale,
-    // for smooth spawn/despawn
     appear: 1, targetAppear: 1,
-    tx:0, tz:0, // target layout pos
+    tx:0, tz:0,
   };
   return g;
 }
@@ -692,21 +672,22 @@ class Crowd{
       ch.userData.appear+=(ch.userData.targetAppear-ch.userData.appear)*Math.min(1, dt*10);
       const s=Math.max(0.01, ch.userData.appear);
 
-      // Run cycle — bounce, squash/stretch, leg pump
-      const ph=t*20+ch.userData.phase;
-      const bob=Math.abs(Math.sin(ph))*0.055;
-      const squash=1+Math.sin(ph*2)*0.06;
+      // Smooth run: bounce + limb swing facing -Z (forward)
+      const ph=t*16+ch.userData.phase;
+      const bob=Math.abs(Math.sin(ph))*0.04;
+      const squash=1+Math.sin(ph*2)*0.04;
       ch.position.y=bob;
       ch.scale.set(s*squash, s*(2-squash), s*squash);
-      ch.rotation.x=-0.18;
+      ch.rotation.set(0, 0, 0); // face -Z (eyes already on -Z)
       if(ch.userData.armL){
-        const swing=Math.sin(ph)*0.1;
-        ch.userData.armL.position.y=0.16*ch.userData.scale+swing;
-        ch.userData.armR.position.y=0.16*ch.userData.scale-swing;
-        ch.userData.legL.position.y=0.04*ch.userData.scale-swing*0.65;
-        ch.userData.legR.position.y=0.04*ch.userData.scale+swing*0.65;
-        ch.userData.legL.position.z=0.02+Math.sin(ph)*0.05;
-        ch.userData.legR.position.z=0.02-Math.sin(ph)*0.05;
+        const swing=Math.sin(ph)*0.08;
+        const sc=ch.userData.scale;
+        ch.userData.armL.position.y=0.20*sc+swing;
+        ch.userData.armR.position.y=0.20*sc-swing;
+        ch.userData.legL.position.y=0.05*sc-Math.abs(swing)*0.4;
+        ch.userData.legR.position.y=0.05*sc-Math.abs(-swing)*0.4;
+        ch.userData.legL.position.z=-0.02+Math.sin(ph)*0.04;
+        ch.userData.legR.position.z=-0.02-Math.sin(ph)*0.04;
       }
     }
     this._cleanup();
@@ -827,6 +808,7 @@ function makePower(kind){
 
 function makeEnemyCrowd(n,boss){
   const g=new THREE.Group();
+  g.rotation.y=Math.PI; // face the approaching player
   // Orange/red like reference
   const bodyC=boss?0xc0392b:0xe67e22, headC=boss?0xe74c3c:0xf5a26f;
   const count=Math.min(n,80);
@@ -895,58 +877,59 @@ function makeStairs(){
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 function apply(op,v,n){switch(op){case'+':return n+v;case'-':return Math.max(0,n-v);case'×':return n*v;case'÷':return Math.max(1,Math.ceil(n/v));}return n;}
 function nice(v){return v>=60?Math.round(v/10)*10:v>=20?Math.round(v/5)*5:Math.max(1,v);}
-const START_COUNT=[8,5,3],DIFF_MULT=[0.7,1.0,1.35];
+// All difficulties completable; hard = more sections, slightly stronger enemies
+const START_COUNT=[10,8,6],DIFF_MULT=[0.45,0.55,0.65];
 
 function genLevel(lv){
   const rng=mulberry32(lv*7919+13+difficulty*97);
   const startN=START_COUNT[difficulty];let ideal=startN;
-  const f=Math.min(0.35+lv*0.025,0.82)*DIFF_MULT[difficulty];
-  const items=[];let d=30;
-  const blocks=Math.min(3+Math.floor(lv*0.6),10);
+  // Enemy strength as fraction of current ideal — always beatable if player picks good gates
+  const f=Math.min(0.40+lv*0.012,0.62)*DIFF_MULT[difficulty];
+  const items=[];let d=28;
+  const blocks=Math.min(2+Math.floor(lv*0.45)+difficulty,8);
 
   function opt(kind){
-    if(kind==='mul')return{op:'×',v:rng()<0.65?2:3};
-    if(kind==='add')return{op:'+',v:nice(Math.max(3,Math.round(ideal*(0.22+rng()*0.45))))};
-    if(kind==='sub')return{op:'-',v:nice(Math.max(2,Math.round(ideal*(0.14+rng()*0.38))))};
+    if(kind==='mul')return{op:'×',v:rng()<0.7?2:3};
+    if(kind==='add')return{op:'+',v:nice(Math.max(4,Math.round(ideal*(0.28+rng()*0.4))))};
+    if(kind==='sub')return{op:'-',v:nice(Math.max(1,Math.round(ideal*(0.08+rng()*0.18))))};
     return{op:'÷',v:2};
   }
-  const goodKinds=lv<2?['add']:['add','add','mul'];
-  const badKinds=lv<3?['sub']:['sub','sub','div'];
+  // Always at least one clearly good option on a gate row
+  const goodKinds=['add','add','mul'];
+  const badKinds=['sub'];
   const pick=a=>a[Math.floor(rng()*a.length)];
 
   function gateRow(){
-    const r=rng();let a,b;
-    if(r<0.48){a=opt(pick(goodKinds));b=opt(pick(badKinds));}
-    else if(r<0.78){a=opt(pick(goodKinds));b=opt(pick(goodKinds));if(a.op===b.op&&a.v===b.v)b=opt('add');}
-    else{a=opt(pick(badKinds));b=opt(pick(badKinds));}
+    let a=opt(pick(goodKinds)), b=opt(pick(badKinds));
+    // 30% both sides ok (choice of two goods)
+    if(rng()<0.3) b=opt(pick(goodKinds));
     if(rng()<0.5)[a,b]=[b,a];
     items.push({type:'gate',d,l:a,r:b,done:false});
+    // ideal assumes player picks the better side
     ideal=Math.max(1,Math.max(apply(a.op,a.v,ideal),apply(b.op,b.v,ideal)));
-    d+=18+Math.floor(rng()*4);
+    d+=20+Math.floor(rng()*4);
   }
   function enemyRow(boss){
-    const k=boss?Math.min(f+0.1,0.94):f;
-    const n=Math.max(2,Math.round(ideal*k*(0.9+rng()*0.18)));
+    // Enemy always weaker than current ideal so a correct path wins
+    const k=boss?Math.min(f+0.08,0.72):f;
+    const n=Math.max(2,Math.round(ideal*k*(0.85+rng()*0.12)));
     items.push({type:'enemy',d,n,boss:!!boss,done:false});
-    ideal=Math.max(1,ideal-n);d+=boss?22:18;
+    ideal=Math.max(startN, ideal-n+Math.round(ideal*0.15));
+    d+=boss?24:20;
   }
-  function powerRow(){const kinds=['magnet','shield','x2','boost'];items.push({type:'power',d,kind:kinds[Math.floor(rng()*kinds.length)],x:(rng()-0.5)*(ROAD_W-2),done:false});d+=12;}
 
-  // Finite level: fixed number of blocks then stairs
   for(let i=0;i<blocks;i++){
     gateRow();
-    if(rng()<0.55)gateRow();
-    if(lv>=3&&rng()<0.35)powerRow();
+    if(rng()<0.5) gateRow();
     enemyRow(false);
   }
   gateRow();
-  if(lv%4===0)enemyRow(true);
+  if(lv%5===0) enemyRow(true);
 
-  // Finish = 15-step staircase (end of level)
-  const stairsD=d+8;
+  // Stairs at end — road continues under them
+  const stairsD=d+10;
   items.push({type:'stairs',d:stairsD,done:false,climbed:0});
-  // length ends shortly after top of stairs
-  return{items,length:stairsD+STAIR_STEPS*0.85+8,startN};
+  return{items,length:stairsD+Math.min(STAIR_STEPS,80)*0.85+12,startN};
 }
 
 /* ========== Game state ========== */
@@ -966,7 +949,6 @@ function spawnItemMeshes(items){
   for(const it of items){
     let mesh=null;
     if(it.type==='gate')mesh=makeGate(it.l,it.r);
-    else if(it.type==='power'){mesh=makePower(it.kind);mesh.position.x=it.x;}
     else if(it.type==='enemy')mesh=makeEnemyCrowd(it.n,it.boss);
     else if(it.type==='stairs')mesh=makeStairs();
     if(mesh){mesh.position.z=-it.d;itemGroup.add(mesh);meshMap.set(it,mesh);}
@@ -1058,6 +1040,11 @@ function startLevel(){newGame(level);st='play';show(null);beep(440,.1,'triangle'
 $('playBtn').addEventListener('click',startLevel);
 $('retryBtn').addEventListener('click',startLevel);
 $('nextBtn').addEventListener('click',startLevel);
+$('loseMenuBtn').addEventListener('click',()=>{
+  st='menu'; if(player){player.dispose();player=null;} G=null;
+  if(battleEnemyCrowd){battleEnemyCrowd.dispose();battleEnemyCrowd=null;}
+  clearItems(); show('menu');
+});
 
 /* Pause */
 let prePauseSt='play';
@@ -1189,15 +1176,6 @@ function update(dt){
       if(it.done && (G.trav - it.d) > 10) mesh.visible = false;
     }
 
-    if(powers.magnet>0){
-      for(const it of G.items){
-        if(it.type==='power'&&!it.done){
-          const dz=it.d-G.trav;
-          if(dz>0&&dz<15){const mesh=meshMap.get(it);if(mesh&&it.x!==undefined){mesh.position.x+=(player.x-mesh.position.x)*dt*5;it.x=mesh.position.x;}}
-        }
-      }
-    }
-
     for(const it of G.items){
       if(it.done)continue;
       const dist=it.d-G.trav;
@@ -1218,7 +1196,7 @@ function update(dt){
         addShake(0.08);
         const m=meshMap.get(it);
         if(m){m.userData.pulse=false;m.traverse(c=>{if(c.material&&c.material.opacity!==undefined){c.material=c.material.clone();c.material.transparent=true;c.material.opacity=0.15;if(c.material.emissiveIntensity!==undefined)c.material.emissiveIntensity=0;}});}
-        if(G.n<=0){doLose('Все человечки пропали в воротах.');return;}
+        if(G.n<=0){doLose('Все челики пропали в воротах.');return;}
       }
       else if(it.type==='enemy'&&dist<=3.5){
         it.done=true;
@@ -1228,16 +1206,12 @@ function update(dt){
         battleEnemyCrowd=new Crowd(false);
         battleEnemyCrowd.setCount(it.n, true);
         battleEnemyCrowd.group.position.set(0, 0, -2.5);
+        battleEnemyCrowd.group.rotation.y=Math.PI; // face the player (+Z)
         battleEnemyCrowd.color=it.boss?0xc0392b:0xe67e22;
         battleEnemyCrowd.setColors(battleEnemyCrowd.color, battleEnemyCrowd.color);
         G.bat={it, pn:G.n, en:it.n, t:0, phase:0, acc:0};
         st='battle';
         break;
-      }
-      else if(it.type==='power'&&dist<=1.4&&dist>=-0.9){
-        if(Math.abs(player.x-it.x)<1.7||powers.magnet>0){
-          it.done=true;activatePower(it.kind);const m=meshMap.get(it);if(m)m.visible=false;
-        }
       }
       else if(it.type==='stairs'&&dist<=2.5){
         // Enter staircase finale
@@ -1308,34 +1282,36 @@ function update(dt){
     }
   }
   else if(st==='stairs'){
-    // Climb solid staircase — characters stand ON top of each step
+    // Челики step up the stairs one by one — feet on step surface
     const s=G.stair;
     s.t+=dt;
     const stepH=0.35, stepD=0.85;
-    const climbSpeed=5.5;
-    G.trav+=climbSpeed*dt;
-    world.position.z=G.trav;
-    for(const [it, mesh] of meshMap){
-      if(mesh) mesh.position.z = G.trav - it.d;
-    }
-    // Time scaled for up to 100 steps
-    const progress=Math.min(1, s.t / (0.5 + s.maxSteps*0.09));
-    const targetStep=Math.floor(progress * s.maxSteps);
+    // Climb rate: ~12 steps/sec feel
+    const stepsPerSec=10;
+    const targetStep=Math.min(s.maxSteps, Math.floor(s.t*stepsPerSec));
     if(targetStep > s.climbed){
-      const gained=targetStep-s.climbed;
       s.climbed=targetStep;
       sStep();
-      // 5 coins for every 5 steps
       if(s.climbed>0 && s.climbed%5===0){
         sCoin();
         floatText('🪙 +'+COINS_PER_5_STEPS,'coin');
       }
       haptic('light');
     }
-    // Place crowd on TOP surface of current step (no sinking)
-    const y=s.climbed * stepH + 0.02;
-    player.group.position.y=THREE.MathUtils.lerp(player.group.position.y, y, Math.min(1,dt*10));
-    if(progress>=1){
+    // Keep world scrolling so stairs stay under the crowd
+    const desiredTrav=s.it.d + s.climbed*stepD;
+    G.trav+=(desiredTrav-G.trav)*Math.min(1,dt*8);
+    world.position.z=G.trav;
+    for(const [it, mesh] of meshMap){
+      if(mesh) mesh.position.z = G.trav - it.d;
+    }
+    // Snap Y to top of current step (solid contact)
+    const y=s.climbed*stepH;
+    player.group.position.y+=(y-player.group.position.y)*Math.min(1,dt*12);
+    player.group.position.x+=(0-player.group.position.x)*dt*4;
+    player.x+=(0-player.x)*dt*4;
+    if(s.maxSteps<=0 && s.t>0.5){ doWin(0, s.people); }
+    else if(s.climbed>=s.maxSteps && s.t>s.maxSteps/stepsPerSec+0.45){
       doWin(s.maxSteps, s.people);
     }
   }
